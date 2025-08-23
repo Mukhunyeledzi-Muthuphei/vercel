@@ -11,6 +11,170 @@ export default function Home() {
   const [apiSpec, setApiSpec] = useState(null);
   const [error, setError] = useState(null);
 
+  // Function to generate sample data based on OpenAPI schema
+  const generateSampleData = (schema) => {
+    if (!schema) return {};
+
+    const { type, properties, items, example } = schema;
+
+    // If there's an example, use it
+    if (example !== undefined) {
+      return example;
+    }
+
+    // Handle different types
+    switch (type) {
+      case 'string':
+        return 'test_string';
+      case 'number':
+      case 'integer':
+        return 42;
+      case 'boolean':
+        return true;
+      case 'array':
+        if (items) {
+          return [generateSampleData(items)];
+        }
+        return [];
+      case 'object':
+        if (properties) {
+          const obj = {};
+          for (const [key, propSchema] of Object.entries(properties)) {
+            obj[key] = generateSampleData(propSchema);
+          }
+          return obj;
+        }
+        return {};
+      default:
+        return {};
+    }
+  };
+
+  // Function to validate the generated endpoint and OpenAPI spec
+  const validateEndpoint = async (data) => {
+    try {
+      // Check if we have the required data
+      if (!data.id || !data.spec) {
+        console.log('Missing endpoint ID or spec');
+        return false;
+      }
+
+      // Parse the OpenAPI spec to understand the endpoint
+      let parsedSpec;
+      try {
+        parsedSpec = JSON.parse(data.spec);
+      } catch {
+        parsedSpec = parse(data.spec.replace(/\\n/g, '\n'));
+      }
+
+      // Find the first available endpoint to test
+      const paths = parsedSpec.paths || {};
+      const firstPath = Object.keys(paths)[0];
+      
+      if (!firstPath) {
+        console.log('No paths found in OpenAPI spec');
+        return false;
+      }
+
+      const pathMethods = paths[firstPath];
+      const firstMethod = Object.keys(pathMethods)[0];
+      
+      if (!firstMethod) {
+        console.log('No methods found in first path');
+        return false;
+      }
+
+      const methodInfo = pathMethods[firstMethod];
+      const method = firstMethod.toUpperCase();
+      
+      console.log(`Testing endpoint: ${method} ${firstPath}`);
+
+      // Build the test URL
+      const baseUrl = `${window.location.origin}/api/${data.id}`;
+      const testUrl = `${baseUrl}${firstPath}`;
+
+      // Prepare request options
+      const requestOptions = {
+        method: method,
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      };
+
+      // Add body for POST/PUT/PATCH requests
+      if (['POST', 'PUT', 'PATCH'].includes(method)) {
+        const requestBody = methodInfo.requestBody;
+        if (requestBody && requestBody.content && requestBody.content['application/json']) {
+          // Generate sample data based on the schema
+          const schema = requestBody.content['application/json'].schema;
+          const sampleData = generateSampleData(schema);
+          requestOptions.body = JSON.stringify(sampleData);
+        } else {
+          // Default empty body for POST/PUT/PATCH without defined schema
+          requestOptions.body = JSON.stringify({});
+        }
+      }
+
+      console.log(`Making request to: ${testUrl}`, requestOptions);
+      const response = await fetch(testUrl, requestOptions);
+
+      // Check if endpoint responds (even if it's an error, it should respond)
+      if (!response.ok && response.status !== 404) {
+        console.log('Endpoint not responding properly');
+        return false;
+      }
+
+      // Validate OpenAPI spec by trying to parse it
+      try {
+        let parsedSpec;
+        
+        // Try parsing as JSON first
+        try {
+          parsedSpec = JSON.parse(data.spec);
+        } catch {
+          // If JSON fails, try YAML
+          parsedSpec = parse(data.spec.replace(/\\n/g, '\n'));
+        }
+
+        // Basic validation - check if it has required fields
+        if (!parsedSpec.openapi && !parsedSpec.swagger) {
+          console.log('Invalid OpenAPI spec - missing version');
+          return false;
+        }
+
+        if (!parsedSpec.info || !parsedSpec.paths) {
+          console.log('Invalid OpenAPI spec - missing info or paths');
+          return false;
+        }
+
+        // Test if SwaggerUI can render it by creating a temporary element
+        const testDiv = document.createElement('div');
+        testDiv.style.display = 'none';
+        document.body.appendChild(testDiv);
+        
+        try {
+          // This is a basic test - in a real implementation you might want to use SwaggerUI's validation
+          const specString = JSON.stringify(parsedSpec);
+          if (specString.length < 100) {
+            console.log('OpenAPI spec too short, likely invalid');
+            return false;
+          }
+        } finally {
+          document.body.removeChild(testDiv);
+        }
+
+        console.log('Endpoint validation passed');
+        return true;
+      } catch (specError) {
+        console.log('OpenAPI spec validation failed:', specError);
+        return false;
+      }
+    } catch (error) {
+      console.log('Endpoint validation error:', error);
+      return false;
+    }
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!query.trim()) return;
@@ -44,9 +208,15 @@ export default function Home() {
           throw new Error(data.error);
         }
 
-        // Success! Set the API spec and stop retrying
-        setApiSpec(data);
-        return true;
+        // Success! Now validate the endpoint and OpenAPI spec
+        const isValid = await validateEndpoint(data);
+        if (isValid) {
+          setApiSpec(data);
+          return true;
+        } else {
+          // Endpoint validation failed, throw error to trigger retry
+          throw new Error('Endpoint validation failed');
+        }
       } catch (err) {
         attempt++;
         
@@ -71,7 +241,7 @@ export default function Home() {
     setIsLoading(false);
   };
 
-  const renderApiSpec = (spec) => {
+  const renderApiSpec = (spec, onRetry) => {
     if (!spec) return null;
 
     // Function to validate and fix OpenAPI spec
@@ -109,29 +279,11 @@ export default function Home() {
         return parsedSpec;
       } catch (error) {
         console.error('Error parsing OpenAPI spec:', error);
-        // Return a minimal valid OpenAPI spec as fallback
-        return {
-          openapi: '3.0.0',
-          info: {
-            title: 'Generated API',
-            version: '1.0.0',
-            description: 'API specification could not be parsed'
-          },
-          paths: {},
-          components: {
-            schemas: {
-              Error: {
-                type: 'object',
-                properties: {
-                  message: {
-                    type: 'string',
-                    description: 'Error message'
-                  }
-                }
-              }
-            }
-          }
-        };
+        // Trigger retry instead of showing fallback
+        if (onRetry) {
+          onRetry();
+        }
+        return null;
       }
     };
 
@@ -281,7 +433,7 @@ export default function Home() {
         </div>
 
         {/* API Spec Display */}
-        {renderApiSpec(apiSpec)}
+        {renderApiSpec(apiSpec, () => handleSubmit({ preventDefault: () => {} }))}
       </div>
     </div>
   );
