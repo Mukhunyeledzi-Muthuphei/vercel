@@ -67,62 +67,103 @@ export default function Home() {
         parsedSpec = parse(data.spec.replace(/\\n/g, '\n'));
       }
 
-      // Find the first available endpoint to test
+      // Get all available endpoints
       const paths = parsedSpec.paths || {};
-      const firstPath = Object.keys(paths)[0];
+      const endpoints = [];
       
-      if (!firstPath) {
-        console.log('No paths found in OpenAPI spec');
+      // Extract all endpoints with their methods and parameters
+      Object.entries(paths).forEach(([path, pathMethods]) => {
+        Object.entries(pathMethods).forEach(([method, methodInfo]) => {
+          endpoints.push({
+            path,
+            method: method.toUpperCase(),
+            methodInfo,
+            parameters: methodInfo.parameters || [],
+            requestBody: methodInfo.requestBody
+          });
+        });
+      });
+      
+      if (endpoints.length === 0) {
+        console.log('No endpoints found in OpenAPI spec');
         return false;
       }
 
-      const pathMethods = paths[firstPath];
-      const firstMethod = Object.keys(pathMethods)[0];
-      
-      if (!firstMethod) {
-        console.log('No methods found in first path');
-        return false;
-      }
+      console.log(`Found ${endpoints.length} endpoints to test`);
 
-      const methodInfo = pathMethods[firstMethod];
-      const method = firstMethod.toUpperCase();
-      
-      console.log(`Testing endpoint: ${method} ${firstPath}`);
+      // Test each endpoint
+      const testResults = await Promise.allSettled(
+        endpoints.map(async (endpoint) => {
+          const { path, method, methodInfo, parameters, requestBody } = endpoint;
+          
+          console.log(`Testing endpoint: ${method} ${path}`);
 
-      // Build the test URL
-      const baseUrl = `${window.location.origin}/api/${data.id}`;
-      const testUrl = `${baseUrl}${firstPath}`;
+          // Build the test URL with path parameters
+          const baseUrl = `${window.location.origin}/api/${data.id}`;
+          let testUrl = `${baseUrl}${path}`;
 
-      // Prepare request options
-      const requestOptions = {
-        method: method,
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      };
+          // Handle path parameters
+          const pathParams = parameters.filter(p => p.in === 'path');
+          if (pathParams.length > 0) {
+            pathParams.forEach(param => {
+              const paramName = param.name;
+              const paramValue = param.example || generateSampleData(param.schema) || 'test';
+              testUrl = testUrl.replace(`{${paramName}}`, paramValue);
+            });
+          }
 
-      // Add body for POST/PUT/PATCH requests
-      if (['POST', 'PUT', 'PATCH'].includes(method)) {
-        const requestBody = methodInfo.requestBody;
-        if (requestBody && requestBody.content && requestBody.content['application/json']) {
-          // Generate sample data based on the schema
-          const schema = requestBody.content['application/json'].schema;
-          const sampleData = generateSampleData(schema);
-          requestOptions.body = JSON.stringify(sampleData);
-        } else {
-          // Default empty body for POST/PUT/PATCH without defined schema
-          requestOptions.body = JSON.stringify({});
-        }
-      }
+          // Handle query parameters
+          const queryParams = parameters.filter(p => p.in === 'query');
+          if (queryParams.length > 0) {
+            const url = new URL(testUrl);
+            queryParams.forEach(param => {
+              const paramName = param.name;
+              const paramValue = param.example || generateSampleData(param.schema) || 'test';
+              url.searchParams.set(paramName, paramValue);
+            });
+            testUrl = url.toString();
+          }
 
-      console.log(`Making request to: ${testUrl}`, requestOptions);
-      const response = await fetch(testUrl, requestOptions);
+          // Prepare request options
+          const requestOptions = {
+            method: method,
+            headers: {
+              'Content-Type': 'application/json',
+            },
+          };
 
-      // Check if endpoint responds (even if it's an error, it should respond)
-      if (!response.ok && response.status !== 404) {
-        console.log('Endpoint not responding properly');
-        return false;
-      }
+          // Add body for POST/PUT/PATCH requests
+          if (['POST', 'PUT', 'PATCH'].includes(method)) {
+            if (requestBody && requestBody.content && requestBody.content['application/json']) {
+              // Generate sample data based on the schema
+              const schema = requestBody.content['application/json'].schema;
+              const sampleData = generateSampleData(schema);
+              requestOptions.body = JSON.stringify(sampleData);
+            } else {
+              // Default empty body for POST/PUT/PATCH without defined schema
+              requestOptions.body = JSON.stringify({});
+            }
+          }
+
+          console.log(`Making request to: ${testUrl}`, requestOptions);
+          const response = await fetch(testUrl, requestOptions);
+
+          // Check if endpoint responds (even if it's an error, it should respond)
+          if (!response.ok && response.status !== 404) {
+            console.log(`Endpoint ${method} ${path} not responding properly`);
+            return { success: false, endpoint: `${method} ${path}`, error: 'Not responding' };
+          }
+
+          return { success: true, endpoint: `${method} ${path}` };
+        })
+      );
+
+      // Check if at least one endpoint is working
+      const successfulTests = testResults.filter(result => 
+        result.status === 'fulfilled' && result.value.success
+      );
+
+      console.log(`Endpoint validation results: ${successfulTests.length}/${endpoints.length} endpoints working`);
 
       // Validate OpenAPI spec by trying to parse it
       try {
@@ -163,8 +204,10 @@ export default function Home() {
           document.body.removeChild(testDiv);
         }
 
-        console.log('Endpoint validation passed');
-        return true;
+        // Consider validation successful if at least one endpoint works
+        const isValid = successfulTests.length > 0;
+        console.log(`Endpoint validation ${isValid ? 'passed' : 'failed'}`);
+        return isValid;
       } catch (specError) {
         console.log('OpenAPI spec validation failed:', specError);
         return false;
@@ -314,7 +357,7 @@ export default function Home() {
                   </button>
                 </div>
                 <p className="text-xs text-gray-500 mt-1">
-                  Use this URL to make requests to your generated API endpoint
+                  Use this URL to make requests to your generated API endpoint. The system tests all available endpoints including those with path parameters and query parameters.
                 </p>
               </div>
             )}
@@ -329,6 +372,9 @@ export default function Home() {
                     defaultModelsExpandDepth={1}
                     defaultModelExpandDepth={1}
                     tryItOutEnabled={true}
+                    supportedSubmitMethods={['get', 'post', 'put', 'delete', 'patch']}
+                    showRequestHeaders={true}
+                    showCommonExtensions={true}
                     onComplete={(swaggerUI) => {
                       // Check if SwaggerUI rendered successfully
                       if (!swaggerUI?.getSystem) {
@@ -344,11 +390,18 @@ export default function Home() {
                         const originalPath = url.pathname;
                         const searchParams = url.search; // This includes the ? and all parameters
                         
-                        // Simply prepend the endpoint ID to the path
-                        const newPath = `/api/${spec.id}${originalPath}`;
+                        // Handle path parameters that might be in the URL
+                        let processedPath = originalPath;
+                        
+                        // If the path contains path parameters (like /users/{id}), 
+                        // SwaggerUI will have already replaced them with actual values
+                        // We just need to prepend our endpoint ID
+                        const newPath = `/api/${spec.id}${processedPath}`;
                         
                         // Reconstruct the full URL with parameters
                         request.url = `${baseUrl}${newPath}${searchParams}`;
+                        
+                        console.log(`[SwaggerUI] Intercepted request: ${request.url}`);
                       }
                       return request;
                     }}
