@@ -115,10 +115,25 @@ export default function Home() {
           <div className="p-6 space-y-6">
             {spec.id && (
               <div>
-                <h4 className="text-sm font-medium text-gray-700 mb-2">Endpoint ID</h4>
-                <div className="bg-gray-50 rounded-lg p-3">
-                  <code className="text-sm font-mono text-gray-800">{spec.id}</code>
+                <h4 className="text-sm font-medium text-gray-700 mb-2">Your API Endpoint URL</h4>
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                  <code className="text-sm font-mono text-blue-900 break-all">
+                    {typeof window !== 'undefined' ? `${window.location.origin}/api/${spec.id}` : `/api/${spec.id}`}
+                  </code>
+                  <button
+                    onClick={() => {
+                      const url = typeof window !== 'undefined' ? `${window.location.origin}/api/${spec.id}` : `/api/${spec.id}`;
+                      navigator.clipboard.writeText(url);
+                      // You could add a toast notification here
+                    }}
+                    className="ml-2 px-2 py-1 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded transition-colors"
+                  >
+                    Copy
+                  </button>
                 </div>
+                <p className="text-xs text-gray-500 mt-1">
+                  Use this URL to make requests to your generated API endpoint
+                </p>
               </div>
             )}
 
