@@ -227,7 +227,7 @@ export default function Home() {
           <span className="text-5xl">⚡</span>
         </h1>
         <p className="text-lg text-gray-600 max-w-2xl mx-auto leading-relaxed">
-          Describe your API needs and get a deployable endpoint in seconds. <br />
+          Describe your API needs and get a deployed endpoint in seconds. <br />
           <span className="text-gray-500 text-base">For frontend devs by AI devs.</span>
         </p>
       </div>
