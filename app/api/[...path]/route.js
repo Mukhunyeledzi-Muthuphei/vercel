@@ -115,7 +115,9 @@ export async function PATCH(request, { params }) {
 async function handleRequest(request, params, method) {
   try {
     
-    const pathSegments = await params.path;
+    // In Next.js 15, params needs to be awaited
+    const resolvedParams = await params;
+    const pathSegments = resolvedParams.path;
     
     const endpointId = pathSegments[0]; // First segment is the endpoint ID
 

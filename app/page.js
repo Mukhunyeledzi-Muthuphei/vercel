@@ -147,12 +147,11 @@ export default function Home() {
                         const originalPath = url.pathname;
                         const searchParams = url.search; // This includes the ? and all parameters
                         
-                        // Replace the base path with our endpoint ID
-                        const newPath = originalPath.replace(/^\/api/, `/api/${spec.id}`);
+                        // Simply prepend the endpoint ID to the path
+                        const newPath = `/api/${spec.id}${originalPath}`;
                         
                         // Reconstruct the full URL with parameters
                         request.url = `${baseUrl}${newPath}${searchParams}`;
-                        
                       }
                       return request;
                     }}
