@@ -19,23 +19,58 @@ export default function Home() {
     setError(null);
     setApiSpec(null);
 
-    try {
-      const response = await fetch('/api/submit-query', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ query: query.trim() }),
-      });
+    const maxRetries = 10; // Maximum number of retries
+    const retryDelay = 1000; // Fixed delay in milliseconds between retries
+    let attempt = 0;
 
-      if (!response.ok) {
-        throw new Error('Failed to submit query');
+    const attemptRequest = async () => {
+      try {
+        const response = await fetch('/api/submit-query', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ query: query.trim() }),
+        });
+
+        if (!response.ok) {
+          throw new Error(`Request failed with status: ${response.status}`);
+        }
+
+        const data = await response.json();
+        
+        // Check if the response contains an error
+        if (data.error) {
+          throw new Error(data.error);
+        }
+
+        // Success! Set the API spec and stop retrying
+        setApiSpec(data);
+        return true;
+      } catch (err) {
+        attempt++;
+        
+        if (attempt >= maxRetries) {
+          // Max retries reached, show error
+          setError(`Sorry, I'm having trouble processing your request right now. Please try again later.`);
+          return false;
+        }
+
+        // Show user-friendly retry status
+        setError(`Still thinking... (attempt ${attempt}/${maxRetries})`);
+        
+        // Wait before retrying
+        await new Promise(resolve => setTimeout(resolve, retryDelay));
+        
+        // Recursively try again
+        return await attemptRequest();
       }
+    };
 
-      const data = await response.json();
-      setApiSpec(data);
+    try {
+      await attemptRequest();
     } catch (err) {
-      setError(err.message);
+      setError(`Unexpected error: ${err.message}`);
     } finally {
       setIsLoading(false);
     }
