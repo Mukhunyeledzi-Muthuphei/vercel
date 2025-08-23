@@ -67,13 +67,8 @@ export default function Home() {
       }
     };
 
-    try {
-      await attemptRequest();
-    } catch (err) {
-      setError(`Unexpected error: ${err.message}`);
-    } finally {
-      setIsLoading(false);
-    }
+    await attemptRequest();
+    setIsLoading(false);
   };
 
   const renderApiSpec = (spec) => {
