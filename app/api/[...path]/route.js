@@ -36,7 +36,10 @@ async function executeCode(code, requestData) {
   try {
     // Create a safe execution context
     const context = {
-      request: requestData,
+      request: {
+        ...requestData,
+        method: requestData.method // Ensure method is accessible as request.method
+      },
       response: {
         statusCode: 200,
         body: null,
