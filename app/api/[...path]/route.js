@@ -32,12 +32,44 @@ async function getEndpointFromDB(endpointId) {
 }
 
 // Safe code execution function
-function executeCode(code, requestData) {
+async function executeCode(code, requestData) {
   try {
     // Create a safe execution context
     const context = {
       request: requestData,
-      response: {},
+      response: {
+        statusCode: 200,
+        body: null,
+        headers: {},
+        ended: false,
+        
+        // Add json method to response object
+        json: function(data) {
+          this.body = data;
+          this.headers['Content-Type'] = 'application/json';
+          this.ended = true;
+          return this;
+        },
+        
+        // Add status method to response object
+        status: function(code) {
+          this.statusCode = code;
+          return this;
+        },
+        
+        // Add send method to response object
+        send: function(data) {
+          this.body = data;
+          this.ended = true;
+          return this;
+        },
+        
+        // Add end method to response object
+        end: function() {
+          this.ended = true;
+          return this;
+        }
+      },
       console: {
         log: (...args) => console.log('[Endpoint Execution]:', ...args),
         error: (...args) => console.error('[Endpoint Execution]:', ...args),
@@ -53,39 +85,45 @@ function executeCode(code, requestData) {
       Boolean,
     };
 
-    // Create a function from the code
-    const functionBody = `
-      return (function(context) {
-        const { request, response, console, Date, Math, JSON, Array, Object, String, Number, Boolean } = context;
-        
-        // Add json method to response object
-        response.json = (data) => {
-          response.body = data;
-          response.status = 200;
-          response.headers = { 'Content-Type': 'application/json' };
-        };
-        
-        // Add status method to response object
-        response.status = (code) => {
-          response.status = code;
-          return response;
-        };
-        
-        // Add send method to response object
-        response.send = (data) => {
-          response.body = data;
-          if (!response.status) response.status = 200;
-        };
-        
-        console.log('[DEBUG] Executing code:', \`${code}\`);
-        ${code}
-        console.log('[DEBUG] Response object after execution:', response);
-        return response;
-      })(context);
-    `;
-
-    const result = new Function('context', functionBody)(context);
-    return result;
+          console.log('[DEBUG] Executing code:', code);
+      console.log('[DEBUG] Request body available as request.body:', requestData.body);
+    
+    try {
+      // Clean and prepare the code for execution
+      const cleanCode = code.replace(/\\n/g, '\n').replace(/\\t/g, '\t').replace(/\\r/g, '\r');
+      
+      // Execute the code in an async context
+      const functionBody = `
+        (async function() {
+          const { request, response, console, Date, Math, JSON, Array, Object, String, Number, Boolean } = context;
+          ${cleanCode}
+        })()
+      `;
+      const result = await eval(functionBody);
+      
+      // If the code returned something and response hasn't been ended, use it
+      if (result !== undefined && !context.response.ended) {
+        context.response.body = result;
+      }
+      
+      console.log('[DEBUG] Response object after execution:', context.response);
+      
+      // Validate that the response object is properly configured
+      if (!context.response || typeof context.response !== 'object') {
+        throw new Error('Response object is not properly initialized');
+      }
+      
+      if (context.response.statusCode === undefined) {
+        context.response.statusCode = 200; // Set default status if not set
+      }
+      
+      return context.response;
+    } catch (error) {
+      console.error('[DEBUG] Error in injected code:', error);
+      context.response.statusCode = 500;
+      context.response.body = { error: 'Internal server error', details: error.message };
+      return context.response;
+    }
   } catch (error) {
     console.error('Code execution error:', error);
     throw new Error(`Code execution failed: ${error.message}`);
@@ -169,13 +207,39 @@ async function handleRequest(request, params, method) {
     }
     
     // Execute the endpoint code
-    const result = executeCode(endpoint.code, requestData);
+    const result = await executeCode(endpoint.code, requestData);
 
     // Handle the response
-    if (result && typeof result === 'object') {
-      const { status = 200, headers = {}, body } = result;
+    if (result && typeof result === 'object' && result.statusCode !== undefined) {
+      const status = result.statusCode || 200;
+      const headers = result.headers || {};
+      const body = result.body || result;
       
-      const response = NextResponse.json(body || result, { status });
+      // For 204 No Content, don't send a body (ignore any body that was set)
+      if (status === 204) {
+        const response = new NextResponse(null, { status });
+        
+        // Set custom headers
+        Object.entries(headers).forEach(([key, value]) => {
+          response.headers.set(key, value);
+        });
+        
+        return response;
+      }
+      
+      // If response was ended but no body was set, return empty response
+      if (result.ended && body === null) {
+        const response = new NextResponse(null, { status });
+        
+        // Set custom headers
+        Object.entries(headers).forEach(([key, value]) => {
+          response.headers.set(key, value);
+        });
+        
+        return response;
+      }
+      
+      const response = NextResponse.json(body, { status });
       
       // Set custom headers
       Object.entries(headers).forEach(([key, value]) => {
@@ -183,6 +247,15 @@ async function handleRequest(request, params, method) {
       });
       
       return response;
+    }
+
+    // If response object is not properly set, treat as error
+    if (!result || typeof result !== 'object' || result.statusCode === undefined) {
+      console.error('[DEBUG] Invalid response object:', result);
+      return NextResponse.json(
+        { error: 'Invalid response from endpoint', details: 'Response object was not properly configured' },
+        { status: 500 }
+      );
     }
 
     // Default response
