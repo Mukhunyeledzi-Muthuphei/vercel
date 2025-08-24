@@ -422,7 +422,7 @@ export default function Home() {
         <h1 className="text-5xl font-bold mb-4 flex items-center justify-center gap-4">
           <span className="text-5xl">🚀</span>
           <span className="bg-gradient-to-r from-blue-600 via-purple-600 to-indigo-600 bg-clip-text text-transparent">
-            Endpoint Generator
+            Mockin-Bird API
           </span>
           <span className="text-5xl">⚡</span>
         </h1>
